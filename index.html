@@ -1,0 +1,224 @@
+<html>
+	<head>
+		<title></title>
+		<meta charset="utf-8"/>
+	</head>
+	<body>
+		<table></table>
+	</body>
+</html>
+<script type="text/javascript" src="dic.js"></script>
+<script type="text/javascript">
+
+	let get = s => document.querySelector(s);
+	let create = t => document.createElement(t);
+	let bind = (item, event, callback) => {
+		item.addEventListener(event, callback);
+	};
+
+	let save = _ => {
+		window.localStorage.setItem("dic", JSON.stringify(dic));
+	}
+	let load = _ => {
+		let json = window.localStorage.getItem("dic");
+		if (json) {
+			let tmp = JSON.parse(json);
+			for (let att in dic) {
+				tmp[att] = dic[att];
+			}
+			dic = tmp;
+		}
+	}
+
+	load();
+
+	let lastCodes = "";
+	let buffer = "";
+	let row = [];
+	let bank = {};
+
+	let addImg = img => {
+
+		let canvas = create("canvas");
+		let sx = canvas.width = img.width;
+		let sy = canvas.height = img.height;
+		let ctx = canvas.getContext("2d");
+		ctx.drawImage(img, 0, 0);
+		get("body").appendChild(canvas);
+		let imgData = ctx.getImageData(0, 0, sx, sy);
+		let d = imgData.data;
+
+		// Remove linha azul
+		for (let y=0, c=0; y<sy; ++y) {
+			for (let x=0; x<sx; ++x, ++c) {
+				let ri = c << 2;
+				let gi = ri + 1;
+				let bi = gi + 1;
+				let r = d[ri];
+				let g = d[gi];
+				let b = d[bi];
+				if (r === 0x33 && g === 0x99 && b === 0xff) {
+					d[ri] = 255;
+					d[gi] = 255;
+					d[bi] = 254;
+					for (let dx = -1; dx<=1; ++dx) {
+						for (let dy = -1; dy<=1; ++dy) {
+							if (dx === 0 && dy === 0) continue;
+							ri = (c + sx*dy + dx) << 2;
+							gi = ri + 1;
+							bi = gi + 1;
+							r = d[ri];
+							g = d[gi];
+							b = d[bi];
+							if (r + g + b === 255*3) {
+								d[ri] = 0;
+								d[gi] = 0;
+								d[bi] = 0;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Binariza em m
+		let m = new Array(sy);
+		for (let y=0, c=0; y<sy; ++y) {
+			let a = new Array(sx);
+			m[y] = a;
+			for (let x=0; x<sx; ++x, ++c) {
+				let ri = c << 2;
+				let gi = ri + 1;
+				let bi = gi + 1;
+				let r = d[ri];
+				let g = d[gi];
+				let b = d[bi];
+				if ((r+g+b)/3/255 < 0.5) {
+					a[x] = 1;
+				} else {
+					a[x] = 0;
+				}
+			}
+		}
+
+		ctx.putImageData(imgData, 0, 0);
+
+		let cellx = 10;
+		let celly = 12;
+
+		let colors = ["#07f", "#f70", "#0af", "#f50"];
+
+		let scann = (i, j) => {
+			let x = j;
+			let y = i;
+			let v = m[i][j];
+			ctx.fillStyle = colors[(j&1)*2 + v];
+			ctx.fillRect(x, y, 1, 1);
+			return v;
+		}
+
+		let read = (i, j, dir) => {
+			let col = j;
+			if (dir < 0) {
+				j = j + cellx - 1;
+			}
+			let code = dir > 0 ? "f" : "b";
+			let width = 0;
+			let next = j + dir*cellx;
+			let spaceBef = 0;
+			let spaceAft = 0;
+			let str = "";
+			for (let dj=0; dj<cellx; ++dj) {
+				let colVal = 0;
+				for (let di=0; di<celly; ++di) {
+					colVal = (colVal << 1) | scann(i + di, j + dj*dir);
+				}
+				if (colVal === 0) {
+					if (width === 0) {
+						++ spaceBef;
+					} else {
+						++ spaceAft;
+						break;
+					}
+				} else {
+					++ width;
+					code += ":" + colVal.toString(16);
+					if (str = dic[code] || "") break;
+				}
+			}
+			return {
+				str: str,
+				next: col + (spaceBef + width + spaceAft)*dir,
+				width: width
+			};
+		};
+
+		let ini_y = 96;
+		let stop = _ => {
+			clearInterval(code);
+		}
+		let colInfo = [
+			{inix: 143, dir: 1},
+			{inix: 640, dir: -1},
+			{inix: 889, dir: -1},
+		];
+		let colIndex = 0;
+		let x = colInfo[colIndex].inix;
+		let y = ini_y;
+		let nextCol = _ => {
+			row.push(buffer);
+			buffer = "";
+			if (++colIndex >= colInfo.length) {
+				colIndex = 0;
+				nextRow();
+				bank[row[0]] = row.slice(1, 3);
+				row = [];
+			}
+			x = colInfo[colIndex].inix;
+		}
+		let nextRow = _ => {
+			y += 18;
+			if (y + celly >= sy) stop();
+		}
+		let code = setInterval(_=>{
+			ctx.putImageData(imgData, 0, 0);
+			ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
+			ctx.fillRect(x, y, cellx, celly);
+			let info = colInfo[colIndex];
+			let dir = info.dir;
+			res = read(y, x, dir, dir > 0 ? "f" : "b");
+			console.log(JSON.stringify(res));
+			stop();
+		}, 0);
+
+	};
+
+	let img = create("img");
+	bind(img, "load", _=>{
+		addImg(img);
+		img.remove();
+	});
+	img.src = "img1.png";
+	get("body").appendChild(img);
+
+	bind(window, "keydown", e=>{
+		let key = e.key.toLowerCase();
+		if (key == "\n" || key == "enter") {
+			// if (lastCodes) {
+			// 	let val = prompt("");
+			// 	dic[lastCodes] = val;
+			// 	save();
+			// 	window.location.reload();
+			// }
+		}
+		if (key === " " || key === "space") {
+			let r = "var dic = {\n";
+			for (let att in dic) {
+				r += '\t"' + att + '": ' + JSON.stringify(dic[att]) + ",\n";
+			}
+			console.clear();
+			console.log(r + "};");
+		}
+	});
+
+</script>
