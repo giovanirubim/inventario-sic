@@ -16,8 +16,10 @@
 		item.addEventListener(event, callback);
 	};
 
+	let readInfo = null;
 	let save = _ => {
 		window.localStorage.setItem("dic", JSON.stringify(dic));
+		window.localStorage.setItem("readInfo", JSON.stringify(readInfo));
 	}
 	let load = _ => {
 		let json = window.localStorage.getItem("dic");
@@ -28,6 +30,10 @@
 			}
 			dic = tmp;
 		}
+		// json = window.localStorage.getItem("readInfo");
+		// if (json) {
+		// 	readInfo = JSON.parse(json);
+		// }
 	}
 
 	load();
@@ -103,7 +109,7 @@
 
 		ctx.putImageData(imgData, 0, 0);
 
-		let cellx = 10;
+		let cellx = 9;
 		let celly = 12;
 
 		let colors = ["#07f", "#f70", "#0af", "#f50"];
@@ -128,6 +134,8 @@
 			let spaceBef = 0;
 			let spaceAft = 0;
 			let str = "";
+			let match = "", matchCode = "";
+			lastCodes = [];
 			for (let dj=0; dj<cellx; ++dj) {
 				let colVal = 0;
 				for (let di=0; di<celly; ++di) {
@@ -143,28 +151,40 @@
 				} else {
 					++ width;
 					code += ":" + colVal.toString(16);
-					if (str = dic[code] || "") break;
+					lastCodes[width] = code;
+					match = dic[code];
+					if (match) matchCode = code;
 				}
+			}
+			if (match &&(matchCode === code || spaceAft)) {
+				str = match;
 			}
 			return {
 				str: str,
-				next: col + (spaceBef + width + spaceAft)*dir,
+				spaceBef: spaceBef,
+				spaceAft: spaceAft,
+				next: col + (spaceBef + width)*dir,
 				width: width
 			};
 		};
 
-		let ini_y = 96;
+		let ini_y = 96 + 18;
 		let stop = _ => {
 			clearInterval(code);
 		}
 		let colInfo = [
 			{inix: 143, dir: 1},
-			{inix: 640, dir: -1},
-			{inix: 889, dir: -1},
+			{inix: 641, dir: -1},
+			{inix: 890, dir: -1},
 		];
 		let colIndex = 0;
 		let x = colInfo[colIndex].inix;
 		let y = ini_y;
+		if (readInfo) {
+			x = readInfo.x;
+			y = readInfo.y;
+			colIndex = readInfo.colIndex;
+		}
 		let nextCol = _ => {
 			row.push(buffer);
 			buffer = "";
@@ -186,9 +206,36 @@
 			ctx.fillRect(x, y, cellx, celly);
 			let info = colInfo[colIndex];
 			let dir = info.dir;
+			readInfo = {
+				x: x,
+				y: y,
+				colIndex: colIndex,
+			};
 			res = read(y, x, dir, dir > 0 ? "f" : "b");
-			console.log(JSON.stringify(res));
-			stop();
+			if (res.width && res.spaceBef > 2) {
+				x += res.spaceBef*dir;
+				if (dir > 0) {
+					buffer += " ";
+				} else {
+					buffer = " " + buffer;
+				}
+				return;
+			}
+			if (res.str === "") {
+				if (res.width === 0) {
+					nextCol();
+					return;
+				}
+				stop();
+				return;
+			}
+			if (dir > 0) {
+				buffer += res.str;
+				if (res.str === "1") res.next += dir*2;
+			} else {
+				buffer = res.str + buffer;
+			}
+			x = res.next;
 		}, 0);
 
 	};
@@ -204,12 +251,21 @@
 	bind(window, "keydown", e=>{
 		let key = e.key.toLowerCase();
 		if (key == "\n" || key == "enter") {
-			// if (lastCodes) {
-			// 	let val = prompt("");
-			// 	dic[lastCodes] = val;
-			// 	save();
-			// 	window.location.reload();
-			// }
+			if (lastCodes.length) {
+				let val = prompt("");
+				let i = 0;
+				if (val.indexOf(" ")>0) {
+					val = val.split(" ");
+					i = parseInt(val[1]);
+					val = val[0];
+				} else {
+					i = lastCodes.length - 1;
+				}
+				let code = lastCodes[i];
+				dic[code] = val;
+				save();
+				window.location.reload();
+			}
 		}
 		if (key === " " || key === "space") {
 			let r = "var dic = {\n";
