@@ -12,30 +12,29 @@
 	var canvas = document.querySelector("canvas");
 	var ctx = canvas.getContext("2d");
 	var sx, sy, binM, imgData, data, bank, scnI;
-	var imageLoaded = false;
+	var loadingImage = false;
 	var marginTop = 95;
 	var delta_y = 18;
 	var cell_sx = 70;
 	var cell_sy = 13;
+	var nImg = 3;
 	var colInfo = [
 		{start_x: 143, limit_x: 443},
 		{start_x: 573, limit_x: 651},
 		{start_x: 822, limit_x: 901}
 	];
 
-	var scannRow = [];
-
-	var loadBank = _ => {
-		bank = window.localStorage.getItem("bank");
-		if (!bank) {
+	// var loadBank = _ => {
+	// 	bank = window.localStorage.getItem("bank");
+	// 	if (!bank) {
 			bank = {};
-		} else {
-			bank = JSON.parse(bank);
-		}
-	};
-	var loadDict = _ => {
-		dict = window.localStorage.getItem("dict");
-		if (!dict) {
+	// 	} else {
+	// 		bank = JSON.parse(bank);
+	// 	}
+	// };
+	// var loadDict = _ => {
+	// 	dict = window.localStorage.getItem("dict");
+	// 	if (!dict) {
 			dict = {
 				"4": ".",
 				"c:70:190:610:190:70:c": "A",
@@ -97,33 +96,49 @@
 				"7fc:180:60:18:60:180:7fc": "M",
 				"188:244:7fe:224:118": "$",
 				"388:444:444:444:3f8": "9",
+				"78:2a4:4a4:2a4:68": "ê",
+				"7fc:300:c0:20:18:7fc": "N",
+				"7a0:4a0:7a0": "º",
+				"208:510:520:248:94:114:208": "%",
+				"f0:c:30:c0:30:c:f0": "w",
+				"600:1c0:30:c:30:1c0:600": "V",
+				"c:30:c0:700": "/",
+				"3f8:404:404:404:404:3f8": "O",
+				"7f8:4:4:4:4:7f8": "U",
+				"7fc:c0:120:210:408:4": "K",
+				"78:85:87:84:48": "ç",
+				"700:c0:30:c": "\\",
 			};
-		} else {
-			dict = JSON.parse(dict);
-		}
-	};
-	var loadScnI = _ => {
-		scnI = window.localStorage.getItem("scnI");
-		if (!scnI) {
+	// 	} else {
+	// 		dict = JSON.parse(dict);
+	// 	}
+	// };
+	// var loadScnI = _ => {
+	// 	scnI = window.localStorage.getItem("scnI");
+	// 	if (!scnI) {
 			scnI = {
-				imgId: 1,
+				imgId: 0,
 				rowIndex: 0,
 				error: false,
-				endOfPage: false,
+				endOfPage: true,
 				y: marginTop,
 				colIndex: null,
 				x: null,
 				buffer: "",
+				row: [],
+				key: "",
+				begin_x: null,
+				end_x: null
 			};
-		} else {
-			scnI = JSON.parse(scnI);
-		}
-		scnI.error = false;
-	};
+	// 	} else {
+	// 		scnI = JSON.parse(scnI);
+	// 	}
+	// 	scnI.error = false;
+	// };
 
-	var saveScnI = _ => window.localStorage.setItem("scnI", JSON.stringify(scnI));
-	var saveBank = _ => window.localStorage.setItem("bank", JSON.stringify(bank));
-	var saveDict = _ => window.localStorage.setItem("dict", JSON.stringify(dict));
+	// var saveScnI = _ => window.localStorage.setItem("scnI", JSON.stringify(scnI));
+	// var saveBank = _ => window.localStorage.setItem("bank", JSON.stringify(bank));
+	// var saveDict = _ => window.localStorage.setItem("dict", JSON.stringify(dict));
 
 	var initRowScann = _ => {
 		scnI.colIndex = 0;
@@ -135,7 +150,7 @@
 		scnI.x = colInfo[i].start_x;
 	};
 	var loadImgSrc = (src, callback) => {
-		imageLoaded = false;
+		loadingImage = true;
 		var img = document.createElement("img");
 		img.onload = e => {
 			img.remove();
@@ -144,7 +159,7 @@
 			ctx.drawImage(img, 0, 0, sx, sy);
 			imgData = ctx.getImageData(0, 0, sx, sy);
 			data = imgData.data;
-			imageLoaded = true;
+			loadingImage = false;
 			callback();
 		};
 		img.src = src;
@@ -162,7 +177,7 @@
 				var r = data[ri];
 				var g = data[gi];
 				var b = data[bi];
-				if (r !== 0x33 || g !== 0x99 || b !== 0xff) {
+				if (r !== 0 || g !== 120 || b !== 215) {
 					continue;
 				}
 				data[ri] = 255;
@@ -192,12 +207,12 @@
 				var bi = gi + 1;
 				var sum = data[ri] + data[gi] + data[bi];
 				row[j] = (sum === 0) - 0;
-				// data[ri] = data[gi] = data[bi] = row[j]*255;
+				data[ri] = data[gi] = data[bi] = row[j]*255;
 			}
 		}
 	};
 	var unknownCode = "";
-	var colors = ["#07f", "#f70", "#0af", "#f40"];
+	var colors = ["#07f", "#111", "#0af", "#222"];
 	var scannCol = (x, y) => {
 		var mask = 0;
 		for (var i=y, e=y+cell_sy; i<e; ++i) {
@@ -209,15 +224,23 @@
 		return mask;
 	}
 	var handleEndCol = _ => {
-		console.log(scnI.buffer);
+		if (scnI.colIndex === 0) {
+			scnI.key = scnI.buffer;
+		} else {
+			scnI.row.push(scnI.buffer);
+		}
+		scnI.buffer = "";
 		if (++ scnI.colIndex >= colInfo.length) {
-			scnI.rowIndex ++;
-			initRowScann();
-			scnI.endOfPage = scnI.y >= 977;
+			handleEndRow();
 		} else {
 			initColScann();
 		}
-		scnI.buffer = "";
+	};
+	var handleEndRow = _ => {
+		scnI.rowIndex ++;
+		bank[scnI.key] = scnI.row;
+		initRowScann();
+		scnI.endOfPage = scnI.y >= 977;
 	};
 	var scannNextCell = () => {
 		var x = scnI.x;
@@ -234,6 +257,8 @@
 			return;
 		}
 		var code = mask.toString(16);
+		var width = 1;
+		var match = dict[code];
 		while (++x < limit) {
 			var prev = mask;
 			mask = scannCol(x, y);
@@ -242,9 +267,11 @@
 			if ((a & b) === 0) {
 				break;
 			}
+			match = dict[code] || match;
 			code += ":" + mask.toString(16);
+			++ width;
 		}
-		var str = dict[code];
+		var str = width > 7 ? match : dict[code];
 		if (!str) {
 			scnI.error = true;
 			unknownCode = code;
@@ -257,35 +284,48 @@
 		scnI.x = x + (str === "1")*2;
 	};
 
-	loadDict();
-	loadScnI();
+	// loadDict();
+	// loadScnI();
 
-	function step() {
-		if (!imageLoaded) return;
-		if (scnI.endOfPage && !scnI.error) {
-			scnI.endOfPage = false;
-			scnI.imgId ++;
-			scnI.rowIndex = 0;
-			initRowScann();
-			loadImgSrc("img" + scnI.imgId + ".png", _=>{});
-		} else if (scnI.error || scnI.endOfPage) {
-			return;
+	var intervalCode = null;
+	var start = _ => {
+		stop();
+		intervalCode = setInterval(step, 0);
+	};
+	var stop = _ => {
+		if (intervalCode !== null) {
+			clearInterval(intervalCode);
+			intervalCode = null;
 		}
-		displayImageData();
-		scannNextCell();
-		saveScnI();
+	};
+
+	function nextImage() {
+		scnI.endOfPage = false;
+		scnI.imgId ++;
+		if (scnI.imgId > nImg) return stop();
+		scnI.rowIndex = 0;
+		initRowScann();
+		loadImgSrc("img" + scnI.imgId + ".png", _ => {
+			removeBlueLine();
+			binarize();
+			displayImageData();
+		});
 	}
 
-	loadImgSrc("img" + scnI.imgId + ".png", _ => {
-		removeBlueLine();
-		binarize();
-		displayImageData();
-		if (scnI.x === null) {
-			initRowScann();
+	function step() {
+		if (scnI.error) {
+			stop();
+			return;
 		}
-		// step();
-		setInterval(step, 0);
-	});
+		if (loadingImage) {
+			return;
+		}
+		if (scnI.endOfPage) {
+			return nextImage();
+		}
+		// displayImageData();
+		scannNextCell();
+	}
 
 	window.onkeydown = e => {
 		var key = e.key.toLowerCase();
@@ -294,6 +334,7 @@
 			if (!txt) return;
 			dict[unknownCode] = txt;
 			scnI.error = false;
+			start();
 			return;
 		}
 		if (key === " ") {
@@ -307,9 +348,6 @@
 			console.log(str);
 			return;
 		}
-		// if (key.replace("arrow", "") === "right") {
-		// 	step();
-		// 	return;
-		// }
 	};
+
 </script>
