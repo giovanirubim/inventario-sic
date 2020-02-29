@@ -1,0 +1,521 @@
+<html>
+	<head>
+		<title></title>
+		<meta charset="utf-8">
+		<style type="text/css">
+			body {
+				margin: 0px;
+			}
+			#imgloader {
+				overflow: hidden;
+				height: 0px;
+				width: 0px;
+			}
+		</style>
+	</head>
+	<body>
+		<canvas></canvas>
+		<div id="imgloader"></div>
+	</body>
+</html>
+<script type="text/javascript" src="learned.js"></script>
+<script type="text/javascript">
+
+const ajax = (url, options) => new Promise((done, fail) => {
+	let data;
+	let type = 'GET';
+	if (options) {
+		data = options.data;
+		type = options.type || type;
+	}
+	var req = new XMLHttpRequest();
+	req.onreadystatechange = function() {
+		if (this.readyState === 4) {
+			if (this.status === 200) {
+				done(this.responseText);
+			} else {
+				fail();
+			}
+		}
+	};
+	req.open(type, url, true);
+	req.send();
+});
+
+const saveDict = () => {
+	localStorage.setItem('dict', JSON.stringify(dict));
+};
+
+const fixIL = str => {
+	str = str.split(' ');
+	str.forEach((word, i) => {
+		const index = word.indexOf('I');
+		if (index === -1) return;
+		const res = dict[word];
+		if (res) {
+			str[i] = res;
+			return;
+		}
+		let a, b, au = 0, al = 0, bu = 0, bl = 0;
+		a = word[index-1];
+		b = word[index+1];
+		if (a) {
+			const u = a.toUpperCase();
+			const l = a.toLowerCase();
+			if (u !== l) {
+				au = (a === u)|0;
+				al = (a === l)|0;
+			}
+		}
+		if (b) {
+			const u = b.toUpperCase();
+			if (u === 'N' || u === 'M' || u === 'V') return;
+			const l = b.toLowerCase();
+			if (u !== l) {
+				bu = (b === u)|0;
+				bl = (b === l)|0;
+			}
+		}
+		if (al || bl && a) {
+			const res = word.substr(0, index) + 'l' + word.substr(index + 1);
+			str[i] = res;
+			dict[word] = res;
+			saveDict();
+			return;
+		}
+		if (au && bu) {
+			dict[word] = word;
+			saveDict();
+			return;
+		}
+		// const tmp = prompt('What is this? ' + JSON.stringify(word) + ' [replace the wrong I by a right l]');
+		// if (tmp) {
+		// 	dict[word] = tmp;
+		// 	saveDict();
+		// }
+	});
+	return str.join(' ');
+};
+
+const relevantCol = {
+	'Produto': true,
+	'Quantidade': true,
+	'Preço de custo': true,
+};
+
+const tableMap = {};
+
+const keyCol = 'Produto';
+let keyIndex;
+
+const color1 = '#07f';
+const color0 = '#024';
+
+const color1s = '#fff';
+const color0s = '#c10';
+
+const canvas = document.querySelector('canvas');
+const imgloader = document.querySelector('#imgloader');
+const ctx = canvas.getContext('2d');
+
+let json = localStorage.getItem('charTree');
+if (json) charTree = JSON.parse(json);
+json = localStorage.getItem('dict');
+if (json) dict = JSON.parse(json);
+const addChar = (char, lines) => {
+	let node = charTree;
+	for (let i=0; i<lines.length; ++i) {
+		const line = lines[i];
+		if (!node[line]) {
+			node[line] = {};
+		}
+		node = node[line];
+	}
+	node.char = char;
+	localStorage.setItem('charTree', JSON.stringify(charTree));
+}
+
+let target;
+let nImages;
+
+const loadImage = (src, callback) => new Promise((done, fail) => {
+	const img = document.createElement('img');
+	let loaded = false;
+	img.onload = () => {
+		if (loaded === false) {
+			loaded = true;
+			done(img);
+			img.remove();
+		}
+	};
+	img.src = src;
+	imgloader.appendChild(img);
+});
+
+const loadGrid = (src, callback) => new Promise((done, fail) => loadImage(src)
+.then(img => {
+	const nrows = img.height;
+	const ncols = img.width;
+	const grid = new Array(nrows);
+	for (let i=nrows; i--;) grid[i] = new Uint8Array(ncols);
+	canvas.width = ncols;
+	canvas.height = nrows;
+	ctx.drawImage(img, 0, 0);
+	const imageData = ctx.getImageData(0, 0, ncols, nrows);
+	const {data} = imageData;
+	let c = 0;
+	for (let i=0; i<nrows; ++i) {
+		const row = grid[i];
+		for (let j=0; j<ncols; ++j) {
+			const r = data[c];
+			const g = data[c+1];
+			const b = data[c+2];
+			const val = Math.round(255 - (r + g + b)/3);
+			row[j] = val;
+			data[c] = data[c+1] = data[c+2] = Math.round(Math.pow(val, 0.75));
+			c += 4;
+		}
+	}
+	ctx.putImageData(imageData, 0, 0);
+	grid.img = img;
+	grid.nrows = nrows;
+	grid.ncols = ncols;
+	done(grid);
+})
+.catch(fail));
+
+const getNImages = () => new Promise((done, fail) => {
+	ajax('nImages')
+	.then(res => {
+		nImages = JSON.parse(res);
+		done();
+	})
+	.catch(fail);
+});
+
+const loadTarget = () => new Promise((done, fail) => {
+	loadGrid('img/target.png')
+	.then(res => {
+		target = res;
+		done();
+	})
+	.catch(fail);
+});
+
+const readFrame = m => new Promise((done, fail) => {
+
+	const {nrows, ncols} = m;
+
+	const t_nrows = target.nrows;
+	const t_ncols = target.ncols;
+
+	const sx = ncols;
+	const sy = nrows;
+	const colInfo = [];
+	const cols = [];
+
+	let start_x = 0;
+	let start_y = 0;
+
+	const measureSx = (x, y) => {
+		const row = m[y];
+		const val = row[x];
+		let i = x + 1;
+		while (i < sx && row[i] === val) ++i;
+		return i - x;
+	};
+
+	const measureSy = (x, y) => {
+		const val = m[y][x];
+		let i = y + 1;
+		while (i < sy && m[i][x] === val) ++i;
+		return i - y;
+	};
+
+	const matchesTarget = (x, y) => {
+		for (let i=0; i<t_nrows; ++i) {
+			for (let j=0; j<t_ncols; ++j) {
+				if (m[y+i][x+j] !== target[i][j]) {
+					ctx.fillStyle = 'rgba(0, 192, 255, 0.1)';
+					ctx.fillRect(x, y, 1, 1);
+					return false;
+				}
+			}
+		}
+		start_x = x + t_ncols;
+		start_y = y;
+		ctx.lineWidth = 1;
+		ctx.strokeStyle = '#f70';
+		ctx.beginPath();
+		ctx.moveTo(start_x + 0.5, 0.5);
+		ctx.lineTo(start_x + 0.5, sy + 0.5);
+		ctx.moveTo(0.5, start_y + 0.5);
+		ctx.lineTo(sx + 0.5, start_y + 0.5);
+		ctx.stroke();
+		return true;
+	};
+	
+	const findTarget = () => new Promise((done, fail) => {
+		let n = 0;
+		let row = 0;
+		let col = 0;
+		let found = false;
+		const step = () => {
+			row = 0;
+			while (row < n) {
+				if (matchesTarget(col, row)) return found = true;
+				++ row;
+			}
+			col = 0;
+			while (col <= n) {
+				if (matchesTarget(col, row)) return found = true;
+				++ col;
+			}
+			++ n;
+			return false;
+		};
+		try {
+			while (!found) step();
+			done();
+		} catch(error) {
+			fail('Unable to find target');
+		}
+	});
+
+	const recognizeChars = (lines, x, y, sx, sy) => new Promise((done, fail) => {
+		let a = 0;
+		let b = 0;
+		let i = 0;
+		let text = '';
+		const n = lines.length;
+		const step = () => {
+			let nBlank = 0;
+			while (i < n && lines[i] === 0) {
+				++ nBlank;
+				++ i;
+			}
+			if (i >= n) return done(fixIL(text.trim()));
+			if (nBlank > 2) text += ' ';
+			let node = charTree;
+			let i0 = i;
+			let char = null;
+			let posi = null;
+			for (; i<n; ++i) {
+				if (node.char) {
+					char = node.char;
+					posi = i;
+				}
+				const line = lines[i];
+				if (!node[line]) break;
+				node = node[line];
+			}
+			if (char === null) {
+				a = i0;
+				b = i;
+				pickChar()
+				.then(() => {
+					recognizeChars(lines, x, y, sx, sy)
+					.then(done)
+					.catch(fail);
+				});
+				return;
+			} else {
+				i = posi;
+				text += char;
+				step();
+			}
+		}
+		const pickChar = () => new Promise((done, fail) => {
+			const show = (x, y, c0, c1) => {
+				const val = m[y][x];
+				ctx.fillStyle = val? c1: c0;
+				ctx.fillRect(x, y, 1, 1);
+			}
+			const highlight = () => {
+				for (let i=0; i<sy; ++i) {
+					const py = y + i;
+					for (let j=a; j<=b; ++j) {
+						const px = x + j;
+						show(px, py, color0s, color1s);
+					}
+					show(x+a-1, py, color0, color1);
+					show(x+b+1, py, color0, color1);
+				}
+			};
+			const clear = () => {
+				for (let i=0; i<sy; ++i) {
+					const py = y + i;
+					for (let j=a; j<=b; ++j) {
+						const px = x + j;
+						show(px, py, color0, color1);
+					}
+				}
+			};
+			window.onkeydown = e => {
+				const key = e.key.toLowerCase().replace('arrow', '');
+				if (key === 'left') b --;
+				else if (key === 'right') b ++;
+				else if (key === 'up') a --;
+				else if (key === 'down') a ++;
+				else if (key === 'enter' || key === '\n') {
+					window.onkeydown = () => {};
+					clear();
+					let char = null;
+					while (!char || char.length !== 1) {
+						char = prompt('Caractere');
+					}
+					addChar(char, lines.slice(a, b + 1));
+					done();
+				} else return;
+				if (a > b) {
+					a = a ^ b;
+					b = a ^ b;
+					a = a ^ b;
+				}
+				highlight();
+				e.preventDefault();
+			};
+			highlight();
+		});
+		step();
+	});
+
+	const readCell = (x0, y0, sx, sy) => new Promise((done, fail) => {
+		let bgColor = m[y0][x0];
+		let lines = new Uint32Array(sx);
+		for (let i=0; i<sx; ++i) {
+			const x = x0 + i;
+			let line = 0;
+			for (let j=0; j<sy; ++j) {
+				const y = y0 + j;
+				const val = (Math.abs(m[y][x] - bgColor) > 128) | 0;
+				m[y][x] = val;
+				ctx.fillStyle = val? color1: color0;
+				ctx.fillRect(x, y, 1, 1);
+				line |= val << j;
+			}
+			lines[i] = line;
+		}
+		recognizeChars(lines, x0, y0, sx, sy).then(done).catch(fail);
+	});
+
+	const readTitles = () => new Promise(done => {
+		let i = 0;
+		let x = start_x + 1;
+		let y = start_y + 1;
+		let defSy = null;
+		ctx.fillStyle = '#07f';
+		const finish = () => {
+			colInfo.forEach((col, i) => {
+				const {title} = col;
+				if (title === keyCol) {
+					keyIndex = i;
+				}
+				if (relevantCol[title]) {
+					cols.push(col);
+				}
+			});
+			done();
+		};
+		const readNext = () => {
+			let sx = measureSx(x, y);
+			let sy = measureSy(x, y);
+			if (sy === target.nrows - 1 && sx > sy) {
+				readCell(x, y, sx, sy)
+				.then(title => {
+					colInfo[i] = {x, y, sx, sy, title};
+					x += sx + 1;
+					++ i;
+					readNext();
+				});
+			} else {
+				finish();
+			}
+		};
+		readNext();
+	});
+
+	const readNextRow = num => new Promise((done, fail) => {
+		const deltaY = target.nrows;
+		const res = [];
+		let end = false;
+		const next = i => new Promise((done, fail) => {
+			if (i >= cols.length) {
+				const key = res[keyIndex];
+				res.splice(keyIndex, 1);
+				tableMap[key] = res;
+				return done();
+			}
+			const col = cols[i];
+			const {sx, sy} = col;
+			let x0 = col.x;
+			let y0 = col.y + deltaY*(num + 1);
+			if (i === 0) {
+				const temp = measureSy(x0, y0);
+				if (temp !== deltaY - 1) {
+					end = true;
+					return done();
+				}
+			}
+			readCell(x0, y0, sx, sy).then(text => {
+				res.push(text);
+				next(i + 1).then(done).catch(fail);
+			});
+		});
+		next(0)
+		.then(() => {
+			if (!end) {
+				readNextRow(num + 1).then(done).catch(fail);
+			} else {
+				done();
+			}
+		}, 0)
+		.catch(fail);
+	});
+
+	findTarget()
+	.then(readTitles)
+	.then(() => readNextRow(0))
+	.then(done)
+	.catch(fail);
+
+});
+
+const nextFrame = number => new Promise((done, fail) => {
+	if (number > nImages) return done();
+	loadGrid('screenshots/' + number + '.png')
+	.then(frame => readFrame(frame))
+	.then(() => nextFrame(number + 1))
+	.then(done)
+	.catch(fail);
+});
+
+getNImages()
+.then(loadTarget)
+.then(() => nextFrame(1))
+.then(() => {
+	const parse = str => {
+		str = str.replace('R$', '').replace(',', '.');
+		while (str.indexOf(' ') !== -1) str = str.replace(' ', '');
+		return parseFloat(str);
+	};
+	const table = [];
+	let sum = 0;
+	for (let name in tableMap) {
+		let [val, qtd] = tableMap[name];
+		val = parse(val);
+		qtd = parse(qtd);
+		if (qtd > 0 && !isNaN(val) && !isNaN(qtd)) {
+			sum += val*qtd;
+			sum = Math.round(sum*100)/100;
+			val = val.toString().replace('.', ',');
+			qtd = qtd.toString().replace('.', ',');
+			table.push([name, val, qtd].join('[\\t]'));
+		}
+	}
+	document.body.innerHTML = table.join('<br>');
+	console.log(sum);
+});
+.catch(error => console.error(error));
+
+</script>
